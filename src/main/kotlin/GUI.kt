@@ -443,7 +443,7 @@ private fun TransactionListSection(
                 val fromMe = myself(it.from.accountId!!)
                 val toMe = myself(it.to.accountId!!)
                 Column(
-                    modifier = Modifier.fillMaxWidth().padding(8.dp)
+                    modifier = Modifier.padding(8.dp)
                 ) {
                     Row {
                         Text(

@@ -79,7 +79,7 @@ class Client(
             val response = server.writePayload(
                 Payload(it.doFinal(message.toJSON().toString().toByteArray()), it.parameters.encoded)
             )
-            println("Client.sendMessageToServer: $response")
+            println("Client.sendMessageToServer (received response): $response")
             it.init(
                 Cipher.DECRYPT_MODE,
                 symKey,
@@ -90,7 +90,7 @@ class Client(
     }
 
     private fun processServerResponse(message: Message) {
-        println("Server.processServerResponse: $message")
+        println("Client.processServerResponse: $message")
         when (message.command) {
             Command.SIGN_UP -> {
                 _user = if (message.data as Boolean) signUpUser!!.copy() else null
