@@ -22,11 +22,12 @@ class Client(
             Signature.getInstance(SERVER_CERTIFICATE_ALGORITHM).let {
                 it.initVerify(
                     KeyFactory.getInstance(SERVER_KEY_ALGORITHM).generatePublic(
-                        X509EncodedKeySpec(server.exchangeKey(certificate.publicKey))
+                        X509EncodedKeySpec(certificate.publicKey)
                     )
                 )
                 it.update(certificate.content)
-                if (!it.verify(certificate.signature)) throw IllegalStateException("Server certificate cannot be verified")
+                if (it.verify(certificate.signature)) println("Server verified")
+                else throw IllegalStateException("Server certificate cannot be verified")
             }
         }
         val keyPair = KeyPairGenerator.getInstance(KEY_EXCHANGE_ALGORITHM).run {
