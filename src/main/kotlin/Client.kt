@@ -18,19 +18,25 @@ class Client(
     val user get() = _user
 
     init {
-        Signature.getInstance(CERT_ALG).let {
-            it.initVerify(CA_KEY_PAIR.public)
-            it.update(CERT_CONTENT.toByteArray())
-            if (!it.verify(server.certificate)) throw IllegalStateException("Server cannot be verified")
+        server.certificate.let { certificate ->
+            Signature.getInstance(SERVER_CERTIFICATE_ALGORITHM).let {
+                it.initVerify(
+                    KeyFactory.getInstance(SERVER_KEY_ALGORITHM).generatePublic(
+                        X509EncodedKeySpec(server.exchangeKey(certificate.publicKey))
+                    )
+                )
+                it.update(certificate.content)
+                if (!it.verify(certificate.signature)) throw IllegalStateException("Server certificate cannot be verified")
+            }
         }
-        val keyPair = KeyPairGenerator.getInstance(KEY_EXC_ALG).run {
-            initialize(KEY_EXC_SIZE)
+        val keyPair = KeyPairGenerator.getInstance(KEY_EXCHANGE_ALGORITHM).run {
+            initialize(KEY_EXCHANGE_KEY_SIZE)
             return@run generateKeyPair()
         }
-        val serverExcPublicKey = KeyFactory.getInstance(KEY_EXC_ALG).generatePublic(
+        val serverExcPublicKey = KeyFactory.getInstance(KEY_EXCHANGE_ALGORITHM).generatePublic(
             X509EncodedKeySpec(server.exchangeKey(keyPair.public.encoded))
         )
-        commKey = KeyAgreement.getInstance(KEY_EXC_ALG).apply {
+        commKey = KeyAgreement.getInstance(KEY_EXCHANGE_ALGORITHM).apply {
             init(keyPair.private)
             doPhase(serverExcPublicKey, true)
         }.generateSecret()
@@ -73,8 +79,8 @@ class Client(
 
     private fun sendMessageToServer(message: Message) {
         println("Client.sendMessageToServer: $message")
-        Cipher.getInstance(SYM_KEY_TRANSF).let {
-            val symKey = SecretKeySpec(commKey, 0, 16, SYM_ALG)
+        Cipher.getInstance(MESSAGE_ENCRYPTION_KEY_TRANSFORMATION).let {
+            val symKey = SecretKeySpec(commKey, 0, 16, MESSAGE_ENCRYPTION_ALGORITHM)
             it.init(Cipher.ENCRYPT_MODE, symKey)
             val response = server.writePayload(
                 Payload(it.doFinal(message.toJSON().toString().toByteArray()), it.parameters.encoded)
@@ -83,7 +89,7 @@ class Client(
             it.init(
                 Cipher.DECRYPT_MODE,
                 symKey,
-                AlgorithmParameters.getInstance(SYM_ALG).apply { init(response.keyParams) }
+                AlgorithmParameters.getInstance(MESSAGE_ENCRYPTION_ALGORITHM).apply { init(response.keyParams) }
             )
             processServerResponse(Message(JSONObject(String(it.doFinal(response.data)))))
         }

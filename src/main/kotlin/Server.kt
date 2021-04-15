@@ -1,8 +1,5 @@
 import org.json.JSONObject
-import java.security.AlgorithmParameters
-import java.security.KeyFactory
-import java.security.KeyPairGenerator
-import java.security.Signature
+import java.security.*
 import java.security.spec.X509EncodedKeySpec
 import javax.crypto.Cipher
 import javax.crypto.KeyAgreement
@@ -10,23 +7,36 @@ import javax.crypto.interfaces.DHPublicKey
 import javax.crypto.spec.SecretKeySpec
 
 class Server {
-    val certificate: ByteArray = Signature.getInstance(CERT_ALG).run {
-        initSign(CA_KEY_PAIR.private)
-        update(CERT_CONTENT.toByteArray())
-        return@run sign()
+    private val keyPair: KeyPair = KeyPairGenerator.getInstance(SERVER_KEY_ALGORITHM).run {
+        initialize(SERVER_KEY_SIZE)
+        return@run generateKeyPair()
     }
+
+    val certificate: Certificate = kotlin.run certificate@{
+        val content = "simple-internet-banking-server".toByteArray()
+        return@certificate Certificate(
+            content,
+            Signature.getInstance(SERVER_CERTIFICATE_ALGORITHM).run signature@{
+                initSign(keyPair.private)
+                update(content)
+                return@signature sign()
+            },
+            keyPair.public.encoded
+        )
+    }
+
     private lateinit var commKey: ByteArray
     private val database = ServerDatabase(".sib-runtime/server.sqlite")
 
     fun exchangeKey(clientKeyEnc: ByteArray): ByteArray {
-        val clientExcPublicKey = KeyFactory.getInstance(KEY_EXC_ALG).generatePublic(
+        val clientExcPublicKey = KeyFactory.getInstance(KEY_EXCHANGE_ALGORITHM).generatePublic(
             X509EncodedKeySpec(clientKeyEnc)
         )
-        val keyPair = KeyPairGenerator.getInstance(KEY_EXC_ALG).run {
+        val keyPair = KeyPairGenerator.getInstance(KEY_EXCHANGE_ALGORITHM).run {
             initialize((clientExcPublicKey as DHPublicKey).params)
             generateKeyPair()
         }
-        commKey = KeyAgreement.getInstance(KEY_EXC_ALG).apply {
+        commKey = KeyAgreement.getInstance(KEY_EXCHANGE_ALGORITHM).apply {
             init(keyPair.private)
             doPhase(clientExcPublicKey, true)
         }.generateSecret()
@@ -36,12 +46,12 @@ class Server {
 
     fun writePayload(payload: Payload): Payload {
         println("Server.writePayload: $payload")
-        Cipher.getInstance(SYM_KEY_TRANSF).let {
-            val symKey = SecretKeySpec(commKey, 0, 16, SYM_ALG)
+        Cipher.getInstance(MESSAGE_ENCRYPTION_KEY_TRANSFORMATION).let {
+            val symKey = SecretKeySpec(commKey, 0, 16, MESSAGE_ENCRYPTION_ALGORITHM)
             it.init(
                 Cipher.DECRYPT_MODE,
                 symKey,
-                AlgorithmParameters.getInstance(SYM_ALG).apply { init(payload.keyParams) }
+                AlgorithmParameters.getInstance(MESSAGE_ENCRYPTION_ALGORITHM).apply { init(payload.keyParams) }
             )
             val result = processClientMessage(Message(JSONObject(String(it.doFinal(payload.data)))))
             it.init(Cipher.ENCRYPT_MODE, symKey)
