@@ -25,42 +25,46 @@ class Server {
         )
     }
 
-    private lateinit var commKey: ByteArray
+    private lateinit var messageEncryptionKey: Key
     private val database = ServerDatabase(".sib-runtime/server.sqlite")
 
-    fun exchangeKey(clientKeyEnc: ByteArray): ByteArray {
-        val clientExcPublicKey = KeyFactory.getInstance(KEY_EXCHANGE_ALGORITHM).generatePublic(
-            X509EncodedKeySpec(clientKeyEnc)
+    fun exchangeEncryptionKey(publicKey: ByteArray): ByteArray {
+        val clientPublicKey = KeyFactory.getInstance(KEY_EXCHANGE_ALGORITHM).generatePublic(
+            X509EncodedKeySpec(publicKey)
         )
         val keyPair = KeyPairGenerator.getInstance(KEY_EXCHANGE_ALGORITHM).run {
-            initialize((clientExcPublicKey as DHPublicKey).params)
-            generateKeyPair()
+            initialize((clientPublicKey as DHPublicKey).params)
+            return@run generateKeyPair()
         }
-        commKey = KeyAgreement.getInstance(KEY_EXCHANGE_ALGORITHM).apply {
+        val sharedKey = KeyAgreement.getInstance(KEY_EXCHANGE_ALGORITHM).apply {
             init(keyPair.private)
-            doPhase(clientExcPublicKey, true)
+            doPhase(clientPublicKey, true)
         }.generateSecret()
-        println("Exchanged key with client: ${commKey.toHexString()}")
+        println("Server encryption key: ${sharedKey.toHexString()}")
+        messageEncryptionKey = SecretKeySpec(sharedKey, 0, 16, MESSAGE_ENCRYPTION_ALGORITHM)
         return keyPair.public.encoded
     }
 
-    fun writePayload(payload: Payload): Payload {
-        println("Server.writePayload: $payload")
-        Cipher.getInstance(MESSAGE_ENCRYPTION_KEY_TRANSFORMATION).let {
-            val symKey = SecretKeySpec(commKey, 0, 16, MESSAGE_ENCRYPTION_ALGORITHM)
-            it.init(
-                Cipher.DECRYPT_MODE,
-                symKey,
-                AlgorithmParameters.getInstance(MESSAGE_ENCRYPTION_ALGORITHM).apply { init(payload.keyParams) }
-            )
-            val result = processClientMessage(Message(JSONObject(String(it.doFinal(payload.data)))))
-            it.init(Cipher.ENCRYPT_MODE, symKey)
-            return Payload(it.doFinal(result.toJSON().toString().toByteArray()), it.parameters.encoded)
-        }
+    fun sendEncryptedData(encryptedData: EncryptedData): EncryptedData {
+        println("Receive encrypted data from client: $encryptedData")
+        val cipher = Cipher.getInstance(MESSAGE_ENCRYPTION_KEY_TRANSFORMATION)
+        cipher.init(
+            Cipher.DECRYPT_MODE,
+            messageEncryptionKey,
+            AlgorithmParameters.getInstance(MESSAGE_ENCRYPTION_ALGORITHM).apply {
+                init(encryptedData.algorithmParameters)
+            }
+        )
+        val responseToSend = processClientMessage(Message(JSONObject(String(cipher.doFinal(encryptedData.data)))))
+        cipher.init(Cipher.ENCRYPT_MODE, messageEncryptionKey)
+        return EncryptedData(
+            cipher.doFinal(responseToSend.toJSON().toString().toByteArray()),
+            cipher.parameters.encoded
+        )
     }
 
     private fun processClientMessage(message: Message): Message {
-        println("Server.processClientMessage: $message")
+        println("Process client message: $message")
         return when (message.command) {
             Command.SIGN_UP -> Message(
                 Command.SIGN_UP, database.insertUser(User(message.data as JSONObject))

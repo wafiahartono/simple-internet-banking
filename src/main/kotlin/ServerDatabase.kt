@@ -9,8 +9,6 @@ class ServerDatabase(path: String) {
     private val connection: Connection = DriverManager.getConnection("jdbc:sqlite:$path")
 
     init {
-//        connection.createStatement().execute("DROP TABLE IF EXISTS `users`;")
-//        connection.createStatement().execute("DROP TABLE IF EXISTS `transactions`;")
         connection.createStatement().execute(
             """
             CREATE TABLE IF NOT EXISTS `users` (

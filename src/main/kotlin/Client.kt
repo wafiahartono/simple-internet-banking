@@ -1,8 +1,5 @@
 import org.json.JSONObject
-import java.security.AlgorithmParameters
-import java.security.KeyFactory
-import java.security.KeyPairGenerator
-import java.security.Signature
+import java.security.*
 import java.security.spec.X509EncodedKeySpec
 import javax.crypto.Cipher
 import javax.crypto.KeyAgreement
@@ -12,41 +9,46 @@ class Client(
     private val serverResponseListener: (Client, Message) -> Unit
 ) {
     private val server = Server()
-    private val commKey: ByteArray
+    private lateinit var messageEncryptionKey: Key
 
     private var _user: User? = null
     val user get() = _user
 
     init {
-        server.certificate.let { certificate ->
-            Signature.getInstance(SERVER_CERTIFICATE_ALGORITHM).let {
-                it.initVerify(
-                    KeyFactory.getInstance(SERVER_KEY_ALGORITHM).generatePublic(
-                        X509EncodedKeySpec(certificate.publicKey)
-                    )
-                )
-                it.update(certificate.content)
-                if (it.verify(certificate.signature)) println("Server verified")
-                else throw IllegalStateException("Server certificate cannot be verified")
-            }
-        }
+        verifyServer()
+        exchangeEncryptionKey()
+    }
+
+    private fun verifyServer() {
+        val signature = Signature.getInstance(SERVER_CERTIFICATE_ALGORITHM)
+        val certificatePublicKey = KeyFactory.getInstance(SERVER_KEY_ALGORITHM).generatePublic(
+            X509EncodedKeySpec(server.certificate.publicKey)
+        )
+        signature.initVerify(certificatePublicKey)
+        signature.update(server.certificate.content)
+        if (signature.verify(server.certificate.signature)) println("Server verified")
+        else throw IllegalStateException("Server cannot be verified")
+    }
+
+    private fun exchangeEncryptionKey() {
         val keyPair = KeyPairGenerator.getInstance(KEY_EXCHANGE_ALGORITHM).run {
             initialize(KEY_EXCHANGE_KEY_SIZE)
             return@run generateKeyPair()
         }
-        val serverExcPublicKey = KeyFactory.getInstance(KEY_EXCHANGE_ALGORITHM).generatePublic(
-            X509EncodedKeySpec(server.exchangeKey(keyPair.public.encoded))
+        val serverPublicKey = KeyFactory.getInstance(KEY_EXCHANGE_ALGORITHM).generatePublic(
+            X509EncodedKeySpec(server.exchangeEncryptionKey(keyPair.public.encoded))
         )
-        commKey = KeyAgreement.getInstance(KEY_EXCHANGE_ALGORITHM).apply {
+        val sharedKey = KeyAgreement.getInstance(KEY_EXCHANGE_ALGORITHM).apply {
             init(keyPair.private)
-            doPhase(serverExcPublicKey, true)
+            doPhase(serverPublicKey, true)
         }.generateSecret()
-        println("Exchanged key with server: ${commKey.toHexString()}")
+        println("Client encryption key: ${sharedKey.toHexString()}")
+        messageEncryptionKey = SecretKeySpec(sharedKey, 0, 16, MESSAGE_ENCRYPTION_ALGORITHM)
     }
 
-    private var signUpUser: User? = null
+    private var signUpUserCache: User? = null
     fun signUp(user: User) {
-        signUpUser = user.copy()
+        signUpUserCache = user.copy()
         sendMessageToServer(Message(Command.SIGN_UP, user.toJSON()))
     }
 
@@ -79,29 +81,27 @@ class Client(
     fun getTransactions() = _user?.accountId?.let { sendMessageToServer(Message(Command.GET_TRANSACTIONS, it)) }
 
     private fun sendMessageToServer(message: Message) {
-        println("Client.sendMessageToServer: $message")
-        Cipher.getInstance(MESSAGE_ENCRYPTION_KEY_TRANSFORMATION).let {
-            val symKey = SecretKeySpec(commKey, 0, 16, MESSAGE_ENCRYPTION_ALGORITHM)
-            it.init(Cipher.ENCRYPT_MODE, symKey)
-            val response = server.writePayload(
-                Payload(it.doFinal(message.toJSON().toString().toByteArray()), it.parameters.encoded)
-            )
-            println("Client.sendMessageToServer (received response): $response")
-            it.init(
-                Cipher.DECRYPT_MODE,
-                symKey,
-                AlgorithmParameters.getInstance(MESSAGE_ENCRYPTION_ALGORITHM).apply { init(response.keyParams) }
-            )
-            processServerResponse(Message(JSONObject(String(it.doFinal(response.data)))))
-        }
+        println("Send to server: $message")
+        val cipher = Cipher.getInstance(MESSAGE_ENCRYPTION_KEY_TRANSFORMATION)
+        cipher.init(Cipher.ENCRYPT_MODE, messageEncryptionKey)
+        val response = server.sendEncryptedData(
+            EncryptedData(cipher.doFinal(message.toJSON().toString().toByteArray()), cipher.parameters.encoded)
+        )
+        println("Server response: $response")
+        cipher.init(
+            Cipher.DECRYPT_MODE,
+            messageEncryptionKey,
+            AlgorithmParameters.getInstance(MESSAGE_ENCRYPTION_ALGORITHM).apply { init(response.algorithmParameters) }
+        )
+        processServerMessage(Message(JSONObject(String(cipher.doFinal(response.data)))))
     }
 
-    private fun processServerResponse(message: Message) {
-        println("Client.processServerResponse: $message")
+    private fun processServerMessage(message: Message) {
+        println("Process server message: $message")
         when (message.command) {
             Command.SIGN_UP -> {
-                _user = if (message.data as Boolean) signUpUser!!.copy() else null
-                signUpUser = null
+                _user = if (message.data as Boolean) signUpUserCache!!.copy() else null
+                signUpUserCache = null
             }
             Command.SIGN_IN,
             Command.GET_USER -> {
