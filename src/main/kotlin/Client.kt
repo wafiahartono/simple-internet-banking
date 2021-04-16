@@ -20,8 +20,8 @@ class Client(
     }
 
     private fun verifyServer() {
-        val signature = Signature.getInstance(SERVER_CERTIFICATE_ALGORITHM)
-        val certificatePublicKey = KeyFactory.getInstance(SERVER_KEY_ALGORITHM).generatePublic(
+        val signature = Signature.getInstance("SHA256withRSA")
+        val certificatePublicKey = KeyFactory.getInstance("RSA").generatePublic(
             X509EncodedKeySpec(server.certificate.publicKey)
         )
         signature.initVerify(certificatePublicKey)
@@ -31,19 +31,19 @@ class Client(
     }
 
     private fun exchangeEncryptionKey() {
-        val keyPair = KeyPairGenerator.getInstance(KEY_EXCHANGE_ALGORITHM).run {
-            initialize(KEY_EXCHANGE_KEY_SIZE)
+        val keyPair = KeyPairGenerator.getInstance("DH").run {
+            initialize(4096)
             return@run generateKeyPair()
         }
-        val serverPublicKey = KeyFactory.getInstance(KEY_EXCHANGE_ALGORITHM).generatePublic(
+        val serverPublicKey = KeyFactory.getInstance("DH").generatePublic(
             X509EncodedKeySpec(server.exchangeEncryptionKey(keyPair.public.encoded))
         )
-        val sharedKey = KeyAgreement.getInstance(KEY_EXCHANGE_ALGORITHM).apply {
+        val sharedKey = KeyAgreement.getInstance("DH").apply {
             init(keyPair.private)
             doPhase(serverPublicKey, true)
         }.generateSecret()
         println("Client encryption key: ${sharedKey.toHexString()}")
-        messageEncryptionKey = SecretKeySpec(sharedKey, 0, 16, MESSAGE_ENCRYPTION_ALGORITHM)
+        messageEncryptionKey = SecretKeySpec(sharedKey, 0, 16, "AES")
     }
 
     private var signUpUserCache: User? = null
@@ -82,7 +82,7 @@ class Client(
 
     private fun sendMessageToServer(message: Message) {
         println("Send to server: $message")
-        val cipher = Cipher.getInstance(MESSAGE_ENCRYPTION_KEY_TRANSFORMATION)
+        val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
         cipher.init(Cipher.ENCRYPT_MODE, messageEncryptionKey)
         val response = server.sendEncryptedData(
             EncryptedData(cipher.doFinal(message.toJSON().toString().toByteArray()), cipher.parameters.encoded)
@@ -91,7 +91,7 @@ class Client(
         cipher.init(
             Cipher.DECRYPT_MODE,
             messageEncryptionKey,
-            AlgorithmParameters.getInstance(MESSAGE_ENCRYPTION_ALGORITHM).apply { init(response.algorithmParameters) }
+            AlgorithmParameters.getInstance("AES").apply { init(response.algorithmParameters) }
         )
         processServerMessage(Message(JSONObject(String(cipher.doFinal(response.data)))))
     }

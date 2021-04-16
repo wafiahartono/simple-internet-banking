@@ -7,8 +7,8 @@ import javax.crypto.interfaces.DHPublicKey
 import javax.crypto.spec.SecretKeySpec
 
 class Server {
-    private val keyPair: KeyPair = KeyPairGenerator.getInstance(SERVER_KEY_ALGORITHM).run {
-        initialize(SERVER_KEY_SIZE)
+    private val keyPair: KeyPair = KeyPairGenerator.getInstance("RSA").run {
+        initialize(4096)
         return@run generateKeyPair()
     }
 
@@ -16,7 +16,7 @@ class Server {
         val content = "simple-internet-banking-server".toByteArray()
         return@certificate Certificate(
             content,
-            Signature.getInstance(SERVER_CERTIFICATE_ALGORITHM).run signature@{
+            Signature.getInstance("SHA256withRSA").run signature@{
                 initSign(keyPair.private)
                 update(content)
                 return@signature sign()
@@ -29,31 +29,29 @@ class Server {
     private val database = ServerDatabase(".sib-runtime/server.sqlite")
 
     fun exchangeEncryptionKey(publicKey: ByteArray): ByteArray {
-        val clientPublicKey = KeyFactory.getInstance(KEY_EXCHANGE_ALGORITHM).generatePublic(
+        val clientPublicKey = KeyFactory.getInstance("DH").generatePublic(
             X509EncodedKeySpec(publicKey)
         )
-        val keyPair = KeyPairGenerator.getInstance(KEY_EXCHANGE_ALGORITHM).run {
+        val keyPair = KeyPairGenerator.getInstance("DH").run {
             initialize((clientPublicKey as DHPublicKey).params)
             return@run generateKeyPair()
         }
-        val sharedKey = KeyAgreement.getInstance(KEY_EXCHANGE_ALGORITHM).apply {
+        val sharedKey = KeyAgreement.getInstance("DH").apply {
             init(keyPair.private)
             doPhase(clientPublicKey, true)
         }.generateSecret()
         println("Server encryption key: ${sharedKey.toHexString()}")
-        messageEncryptionKey = SecretKeySpec(sharedKey, 0, 16, MESSAGE_ENCRYPTION_ALGORITHM)
+        messageEncryptionKey = SecretKeySpec(sharedKey, 0, 16, "AES")
         return keyPair.public.encoded
     }
 
     fun sendEncryptedData(encryptedData: EncryptedData): EncryptedData {
         println("Receive encrypted data from client: $encryptedData")
-        val cipher = Cipher.getInstance(MESSAGE_ENCRYPTION_KEY_TRANSFORMATION)
+        val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
         cipher.init(
             Cipher.DECRYPT_MODE,
             messageEncryptionKey,
-            AlgorithmParameters.getInstance(MESSAGE_ENCRYPTION_ALGORITHM).apply {
-                init(encryptedData.algorithmParameters)
-            }
+            AlgorithmParameters.getInstance("AES").apply { init(encryptedData.algorithmParameters) }
         )
         val responseToSend = processClientMessage(Message(JSONObject(String(cipher.doFinal(encryptedData.data)))))
         cipher.init(Cipher.ENCRYPT_MODE, messageEncryptionKey)

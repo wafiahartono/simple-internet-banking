@@ -42,7 +42,7 @@ class ServerDatabase(path: String) {
         setString(2, user.username)
         setString(
             3, String(
-                MessageDigest.getInstance(USER_PASSWD_HASH_ALG).digest(user.password!!.toByteArray())
+                MessageDigest.getInstance("SHA-256").digest(user.password!!.toByteArray())
             )
         )
         setString(4, user.name)
@@ -53,7 +53,7 @@ class ServerDatabase(path: String) {
     ).apply { setString(1, user.username) }.executeQuery().use {
         return@use if (it.next()) {
             val hashed = String(
-                MessageDigest.getInstance(USER_PASSWD_HASH_ALG).digest(user.password!!.toByteArray())
+                MessageDigest.getInstance("SHA-256").digest(user.password!!.toByteArray())
             )
             return@use if (hashed == it.getString("password")) getUser(user.username!!)
             else null
