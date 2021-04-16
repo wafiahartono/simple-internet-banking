@@ -31,7 +31,7 @@ Aplikasi internet banking sederhana yang mendemonstrasikan beberapa teknik kript
 
 #### Diagram alur kriptografi
 
-_akan ditambahkan_
+![Diagram alur](screenshots/sequence-diagram.png)
 
 #### Menjalankan aplikasi
 
